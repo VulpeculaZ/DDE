@@ -1,53 +1,307 @@
-ProfileSSE <- function(pars, allpars, times, data, coefs, lik, proc, in.meth = "nlminb",
-                       control.in = NULL, active = 1:length(pars), dcdp = NULL,
-                       oldpars = NULL, use.nls = TRUE, sgn = 1)
+
+##' .. content for \description{} (no empty lines) ..
+##'
+##' .. content for \details{} ..
+##' @title Evaluate fd objects at delayed times.
+##' @param fd0 fd object starting at time 0 and ends at time tau
+##' @param fd.d fd object starting at time tau
+##' @param times Time points at which solution is evaluated. The values of the solution at times - tau are returned.
+##' @param tau The delay
+##' @param tau.max The Maximum of the delay.
+##' @return A vector of values of the solution at times - tau are returned.
+##' @author Ziqian Zhou
+delay.fit <- function(fd0, fd.d, times, tau){
+    basisvals0 <- fd0$basis
+    basisvals.d <- fd.d$basis
+    times.d <- times - tau
+    start.d <- fd.d$basis$rangeval[1]
+    y.d0 <- eval.fd(times.d[times.d < start.d], fd0) ## Same as bvals %*$ coefs
+    dy.d0 <- eval.fd(times.d[times.d < start.d], fd0, Lfdobj = 1)
+    y.d.d <- eval.fd(times.d[times.d >= start.d], fd.d)
+    dy.d.d <- eval.fd(times.d[times.d >= start.d], fd.d, Lfdobj = 1)
+    y.d <- rbind(y.d0, y.d.d)
+    dy.d <- rbind(dy.d0, dy.d.d)
+    ## Need to set \frac{dx(t_{i}-T_{j})}{d\mathbf{c}}=0 for t_{i}<T_{j}
+    ## !!
+    bvals.d <- eval.basis(times.d[times.d >= start.d], basisvals.d, 0)
+    dbvals.d <- eval.basis(times.d[times.d >= start.d], basisvals.d, 1)
+    return(list(y.d = y.d, dy.d = dy.d, dbvals.d = dbvals.d, bvals.d = bvals.d))
+}
+
+
+ProfileSSE.DDE <- function(pars, allpars, times, data, coefs, lik, proc, in.meth = "nlminb", control.in = NULL, active = 1:length(pars), dcdp = NULL, oldpars = NULL, use.nls = TRUE, sgn = 1, basisvals = NULL, fdobj0 = NULL)
 {
     allpars[active] = pars
-    f <- ProfileSSE.AllPar(pars = allpars, times = times, data = data,
-                           coefs = coefs, lik = lik, proc = proc, in.meth = in.meth,
-                           control.in = control.in, dcdp = dcdp, oldpars = oldpars,
-                           use.nls = use.nls, sgn = sgn)
+    f <- ProfileSSE.AllPar.DDE(pars = allpars, times = times, data = data, coefs = coefs, lik = lik, proc = proc, in.meth = in.meth,control.in = control.in, dcdp = dcdp, oldpars = oldpars, use.nls = use.nls, sgn = sgn, basisvals = basisvals, fdobj0 = fdobj0, )
     if (use.nls) {
+        attr(f,'gradient') = attr(f, 'gradient')[,active]
     }
-    else {
+    else{
         f$gradient = f$gradient[, active, drop = FALSE]
         f$dcdp = f$dcdp[, active, drop = FALSE]
     }
     return(f)
 }
 
-Smooth.LS.DDE <- function(fn, data, times, pars, coefs = NULL, basisvals = NULL,
+Profile.LS.DDE <- function(fn, data, times, pars, coefs = NULL, basisvals = NULL,
+    lambda, fd.obj = NULL, more = NULL, weights = NULL, quadrature = NULL,
+    in.meth = "nlminb", out.meth = "nls", control.in = list(),
+    control.out = list(), eps = 1e-06, active = NULL, posproc = FALSE,
+    poslik = FALSE, discrete = FALSE, names = NULL, sparse = FALSE,
+    likfn = make.id(), likmore = NULL, delay = NULL, tauMax = NULL,
+    basisvals0 = NULL, coefs0 = NULL, tauIndex = NULL)
+{
+    if (is.null(active)) {
+        active = 1:length(pars)
+    }
+    ##################################################
+    ## Added to orginal Profile.LS
+    if(is.null(tauMax)) tauMax <- min(times) + 1/3 * (range(times)[2]- range(times)[1])
+    ## Prepare to calculate the delay:
+    ## data.d <- data[times>=tauMax, ,drop = FALSE]
+    ## times.d <- knots.d <- times[times >= tauMax]
+    ## norder <- basisvals$nbasis - length(basisvals$params)
+    ## nbasis.d <- length(knots.d) + norder - 2
+    ## range.d <- range(knots.d)
+    ## basisvals.d and basisvals.0 are supplied rather than created
+    ## basisvals.d <- create.bspline.basis(range=range.d, nbasis=nbasis.d, norder=norder, breaks=knots.d)
+    ## Create y.d
+    fdnames <- list(NULL, NULL, NULL)
+    fdnames[[2]] <- attr(coefs, "dimnames")[[2]]
+    fdobj0 <- list(coefs = coefs0, basis = basisvals0, fdnames =fdnames)
+    fdobj.d <- list(coefs = coefs, basis = basisvals, fdnames =fdnames)
+    attr(fdobj0, "class") <- "fd"
+    attr(fdobj.d, "class") <- "fd"
+
+    profile.obj = LS.setup(pars = pars, coefs = coefs, fn = fn,
+        basisvals, lambda = lambda, fd.obj, more, data, weights,
+        times, quadrature, eps = 1e-06, posproc, poslik, discrete,
+        names, sparse, likfn = make.id(), likmore = NULL)
+    dims = dim(data)
+    lik = profile.obj$lik
+    proc = profile.obj$proc
+    coefs = profile.obj$coefs
+    data = profile.obj$data
+    times = profile.obj$times
+
+    ##################################################
+    ## Added delay data and functions
+    ##################################################
+    delayProcObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = proc$more$qpts, tau = pars["tau"])
+    delayLikObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = times, tau = pars["tau"])
+    lik$more$more$y.d <- delayLikObj$y.d
+    proc$more$more$y.d <- delayProcObj$y.d
+    lik$more$more$dy.d <- delayLikObj$dy.d
+    proc$more$more$dy.d <- delayProcObj$dy.d
+    lik$more$more$bvals.d <- delayLikObj$bvals.d
+    proc$more$more$bvals.d <- delayProcObj$bvals.d
+    lik$more$more$dbvals.d <- delayLikObj$dbvals.d
+    proc$more$more$dbvals.d <- delayProcObj$dbvals.d
+    proc$more$more$tauIndex <- tauIndex
+
+    proc$dfdc <- delay$dfdc
+    proc$d2fdc2 <- delay$d2fdc2.DDE
+    proc$d2fdcdp <- delay$d2fdcdp.DDE
+    proc$more$delay <- delay
+    proc$more$dfdtau <- dfdtau.DDE
+    proc$more$d2fdxdtau <- d2fxdtau.DDE
+    proc$more$d2fdx.ddtau <- d2fdx.ddtau.DDE
+
+    if (file.exists("curcoefs.tmp")) {
+        file.remove("curcoefs.tmp")
+    }
+    if (file.exists("optcoefs.tmp")) {
+        file.remove("optcoefs.tmp")
+    }
+    if (file.exists("counter.tmp")) {
+        file.remove("counter.tmp")
+    }
+    Ires <- inneropt.DDE(data, times, pars, coefs, lik, proc, in.meth, control.in, basisvals = basisvals, fdobj0 = fdobj0)
+    ## Ires <- IresTmp
+    ncoefs = Ires$coefs
+    write.table(ncoefs, file = "optcoefs.tmp", col.names = FALSE,
+        row.names = FALSE)
+    write.table(ncoefs, file = "curcoefs.tmp", col.names = FALSE,
+        row.names = FALSE)
+    apars = pars[active]
+    aparamnames = names(apars)
+    if (out.meth == "ProfileGN") {
+        res = Profile.GausNewt(pars = pars, times = times, data = data,
+            coefs = ncoefs, lik = lik, proc = proc, in.meth = in.meth,
+            control.in = control.in, active = active, control = control.out)
+        apars = res$pars[active]
+        ncoefs = res$in.res$coefs
+        g = res$in.res$df
+        resid = res$in.res$f
+    }
+    if (out.meth == "nls") {
+        if (is.null(control.out$trace)) {
+            control.out$trace = TRUE
+        }
+        if (is.null(control.out$maxiter)) {
+            control.out$maxiter = 100
+        }
+        if (is.null(control.out$tol)) {
+            control.out$tol = 1e-08
+        }
+        if (is.null(control.out$printEval)) {
+            control.out$printEval = TRUE
+        }
+        if (is.null(control.out$warnOnly)) {
+            control.out$warnOnly = TRUE
+        }
+        res = nls(~ProfileSSE.DDE(pars, allpars, times, data, coefs,
+            lik, proc, in.meth, control.in, active, basisvals = basisvals, fdobj0=fdobj0),
+        data = list(allpars = pars, basisvals = basisvals, fdobj0 = fdobj0,
+            times = times, data = data, coefs = ncoefs, lik = lik,
+            proc = proc, in.meth = in.meth, control.in = control.in,
+            active = active), start = list(pars = pars[active]),
+            trace = control.out$trace, control = control.out)
+        apars = res$m$getPars()
+        g = res$m$gradient()
+        resid = res$m$resid()
+        if (file.exists("curcoefs.tmp"))
+            ncoefs = as.matrix(read.table(file = "curcoefs.tmp"))
+        else ncoefs = coefs
+    }
+    names(apars) = aparamnames
+    pars[active] = apars
+    ncoefs = as.matrix(ncoefs)
+    if (!is.null(proc$more$names)) {
+        colnames(ncoefs) = proc$more$names
+    }
+    if (file.exists("curcoefs.tmp")) {
+        file.remove("curcoefs.tmp")
+    }
+    if (file.exists("optcoefs.tmp")) {
+        file.remove("optcoefs.tmp")
+    }
+    if (file.exists("counter.tmp")) {
+        file.remove("counter.tmp")
+    }
+    if (!is.null(fd.obj)) {
+        ncoefs = array(ncoefs, c(nrow(ncoefs)/dims[2], dims[2],
+            dims[3]))
+        fd.obj = fd(ncoefs, fd.obj$basis)
+        return(list(pars = pars, fd = fd.obj, lik = lik, proc = proc,
+            outer.result = res))
+    }
+    else {
+        return(list(pars = pars, coefs = ncoefs, lik = lik, proc = proc,
+            outer.result = res, data = data, times = times))
+    }
+}
+
+checkweights  <- function(weights, whichrows, diffs)
+{
+    if(is.vector(diffs)){
+        diffs <- matrix(diffs, length(diffs), 1)
+    }
+    if (is.null(whichrows)) {
+        whichrows = 1:nrow(diffs)
+    }
+    if (is.null(weights)) {
+        return(matrix(1, nrow(diffs), ncol(diffs)))
+    }
+    else if (prod(dim(weights[whichrows, ]) == dim(diffs))) {
+
+        if(dim(weights)[2] == 1){
+            return(matrix(weights[whichrows, ],ncol = 1))
+        }
+
+        return(weights[whichrows, ])
+    }
+    else if (length(weights) == ncol(diffs)) {
+        return(matrix(weights, nrow(diffs), ncol(diffs), byrow = TRUE))
+    }
+    else if (length(weights[whichrows]) == nrow(diffs)) {
+        return(matrix(weights, nrow(diffs), ncol(diffs), byrow = FALSE))
+    }
+    else if (ncol(weights[whichrows, ]) > ncol(diffs) & nrow(weights) >
+        nrow(diffs)) {
+        warning("Dimension of weights does not match that of data")
+        return(weights[whichrows[1:nrow(diffs)], 1:ncol(diffs)])
+    }
+    else {
+        stop("Dimension of weights does not match that of data")
+    }
+}
+
+
+Smooth.LS.DDE <- function(fn, data, times, pars, coefs = NULL, coefs0 = NULL,  basisvals = NULL, basisvals0 = NULL,
     lambda, fd.obj = NULL, more = NULL, weights = NULL, quadrature = NULL,
     in.meth = "nlminb", control.in = list(), eps = 1e-06, posproc = FALSE,
     poslik = FALSE, discrete = FALSE, names = NULL, sparse = FALSE,
-    likfn = make.id(), likmore = NULL)
+    likfn = make.id(), likmore = NULL, tauMax = NULL, delay = NULL)
 {
+    if(is.null(tauMax)) tauMax <- min(times) + 1/3 * (range(times)[2]- range(times)[1])
     dims = dim(data)
     ## if(dims[2] == 1){
     ##     data <- matrix(data[times > pars["tau"],], ncol = 1)
     ## }else
     ##     data <- data[times > pars["tau"],]
     ## coefs <- coefs[times > pars["tau"]]
-
     ## times <- times[times > pars["tau"]]
+    ## Prepare to calculate the delay:
+    ## norder <- basisvals$nbasis - length(basisvals$params)
+    ## nbasis.d <- length(knots.d) + norder - 2
+    ## range.d <- range(knots.d)
 
-    profile.obj = LS.setup(pars, coefs, fn, basisvals, lambda,
+    ## Create fd objects to fit y.d
+    fdnames <- list(NULL, NULL, NULL)
+    fdnames[[2]] <- attr(coefs, "dimnames")[[2]]
+    fdobj0 <- list(coefs = coefs0, basis = basisvals0, fdnames =fdnames)
+    fdobj.d <- list(coefs = coefs, basis = basisvals, fdnames =fdnames)
+    attr(fdobj0, "class") <- "fd"
+    attr(fdobj.d, "class") <- "fd"
+
+    ## basisvalsTau <- basisvals
+    ## basisvalsTau$rangeval[1] <- pars["tau"]
+    ## basisvalsTau$params <- basisvals$params[ basisvals$params > pars["tau"]]
+    ## basisvalsTau$nbasis <-  basisvals$nbasis - length(basisvals$params) +
+    ##     length(basisvalsTau$params)
+    ## basisvalsTau$names <- basisvals$names[1:basisvalsTau$nbasis]
+    profile.obj <- LS.setup(pars, coefs, fn, basisvals=basisvals, lambda,
         fd.obj, more, data, weights, times, quadrature, eps = 1e-06,
         posproc, poslik, discrete, names = names, sparse = sparse,
         likfn = make.id(), likmore = NULL)
     lik = profile.obj$lik
     proc = profile.obj$proc
     coefs = profile.obj$coefs
+    data = profile.obj$data
+    times = profile.obj$times
 
-    fdnames <- list(NULL, NULL, NULL)
-    fdnames[[2]] <- attr(coefs0, "dimnames")[[2]]
-    fdobj <- list(coefs = coefs, basis = basisvals, fdnames =fdnames)
-    attr(fdobj, "class") <- "fd"
-    y.d <- eval.fd(times - pars["tau"], fdobj)
-    lik$more$y.d <- proc$more$y.d <- y.d
+    ##################################################
+    ## Added delay data and functions
+    ##################################################
+    delayLikObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times, pars["tau"])
+    delayProcObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = proc$more$qpts, pars["tau"])
+    lik$more$more$y.d <- delayLikObj$y.d
+    proc$more$more$y.d <- delayProcObj$y.d
+    lik$more$more$dy.d <- delayLikObj$dy.d
+    proc$more$more$dy.d <- delayProcObj$dy.d
+    lik$more$more$bvals.d <- delayLikObj$bvals.d
+    proc$more$more$bvals.d <- delayProcObj$bvals.d
+    lik$more$more$dbvals.d <- delayLikObj$dbvals.d
+    proc$more$more$dbvals.d <- delayProcObj$dbvals.d
+    proc$dfdc <- delay$dfdc
+    proc$d2fdc2 <- delay$d2fdc2.DDE
+    proc$d2fdcdp <- delay$d2fdcdp.DDE
+    proc$more$delay <- delay
+    ## No need to use:
+    ## proc$more$dfdtau <- dfdtau.DDE
+    ## proc$more$d2fxdtau <- d2fxdtau.DDE
+    ## proc$more$d2fdx.ddtau <- d2fdx.ddtau.DDE
+
+    ## fdnames <- list(NULL, NULL, NULL)
+    ## fdnames[[2]] <- attr(coefs0, "dimnames")[[2]]
+    ## fdobj <- list(coefs = coefs0, basis = basisvals0, fdnames =fdnames)
+    ## attr(fdobj, "class") <- "fd"
+    ## lik$more$more$y.d <- eval.fd(times - pars["tau"], fdobj)
+    ## proc$more$more$y.d <- eval.fd(proc$more$qpts - pars["tau"], fdobj)
 
     Ires = inneropt.DDE(data, times, pars, coefs, lik, proc, in.meth,
-        control.in)
+        control.in, basisvals=basisvals, fdobj0 = fdobj0)
     ncoefs = Ires$coefs
     Ires = Ires$res
     ncoefs = as.matrix(ncoefs)
@@ -72,8 +326,81 @@ Smooth.LS.DDE <- function(fn, data, times, pars, coefs = NULL, basisvals = NULL,
     }
 }
 
+SplineCoefsErr.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, basisvals, fdobj0){
+    fdnames <- list(NULL, NULL, NULL)
+    fdnames[[2]] <- attr(coefs, "dimnames")[[2]]
+    fdobj.d <- list(coefs = coefs, basis = basisvals, fdnames =fdnames)
+    attr(fdobj.d, "class") <- "fd"
+    delayProcObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = proc$more$qpts, tau = pars["tau"])
+    delayLikObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = times, tau = pars["tau"])
+    lik$more$more$y.d <- delayLikObj$y.d
+    proc$more$more$y.d <- delayProcObj$y.d
+    lik$more$more$dy.d <- delayLikObj$dy.d
+    proc$more$more$dy.d <- delayProcObj$dy.d
+    lik$more$more$bvals.d <- delayLikObj$bvals.d
+    proc$more$more$bvals.d <- delayProcObj$bvals.d
+    lik$more$more$dbvals.d <- delayLikObj$dbvals.d
+    proc$more$more$dbvals.d <- delayProcObj$dbvals.d
+
+    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
+    devals = as.matrix(lik$bvals %*% coefs2)
+    colnames(devals) = proc$more$names
+    f = sum(lik$fn(data, times, devals, pars, lik$more)) + proc$fn(coefs2,
+        proc$bvals, pars, proc$more)
+    if (!is.null(proc$report)) {
+        print(f)
+    }
+    return(sgn * f)
+}
+
+SplineCoefsDC.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, basisvals, fdobj0){
+    fdnames <- list(NULL, NULL, NULL)
+    fdnames[[2]] <- attr(coefs, "dimnames")[[2]]
+    fdobj.d <- list(coefs = coefs, basis = basisvals, fdnames =fdnames)
+    attr(fdobj.d, "class") <- "fd"
+    delayProcObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = proc$more$qpts, tau = pars["tau"])
+    delayLikObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = times, tau = pars["tau"])
+    lik$more$more$y.d <- delayLikObj$y.d
+    proc$more$more$y.d <- delayProcObj$y.d
+    lik$more$more$dy.d <- delayLikObj$dy.d
+    proc$more$more$dy.d <- delayProcObj$dy.d
+    lik$more$more$bvals.d <- delayLikObj$bvals.d
+    proc$more$more$bvals.d <- delayProcObj$bvals.d
+    lik$more$more$dbvals.d <- delayLikObj$dbvals.d
+    proc$more$more$dbvals.d <- delayProcObj$dbvals.d
+    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
+    devals = as.matrix(lik$bvals %*% coefs2)
+    colnames(devals) = proc$more$names
+    g = as.matrix(t(lik$bvals) %*% lik$dfdx(data, times, devals,
+        pars, lik$more)) + proc$dfdc(coefs2, proc$bvals, pars,
+        proc$more)
+    g = as.vector(g)
+    return(sgn * g)
+}
+
+SplineCoefsDC2.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, basisvals, fdobj0){
+    fdnames <- list(NULL, NULL, NULL)
+    fdnames[[2]] <- attr(coefs, "dimnames")[[2]]
+    fdobj.d <- list(coefs = coefs, basis = basisvals, fdnames =fdnames)
+    attr(fdobj.d, "class") <- "fd"
+    delayProcObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = proc$more$qpts, tau = pars["tau"])
+    delayLikObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = times, tau = pars["tau"])
+    lik$more$more$y.d <- delayLikObj$y.d
+    proc$more$more$y.d <- delayProcObj$y.d
+    lik$more$more$dy.d <- delayLikObj$dy.d
+    proc$more$more$dy.d <- delayProcObj$dy.d
+    lik$more$more$bvals.d <- delayLikObj$bvals.d
+    proc$more$more$bvals.d <- delayProcObj$bvals.d
+    lik$more$more$dbvals.d <- delayLikObj$dbvals.d
+    proc$more$more$dbvals.d <- delayProcObj$dbvals.d
+    result = as.matrix(SplineCoefsDC2sparse(coefs, times, data,
+    lik, proc, pars, sgn))
+    return(result)
+}
+
 inneropt.DDE <- function(data, times, pars, coefs, lik, proc,
-                         in.meth = "nlminb", control.in = list())
+                         in.meth = "nlminb", control.in = list(),
+                         basisvals, fdobj0)
 {
     check.lik.proc.data.coefs(lik, proc, data, times, coefs)
     if (in.meth == "optim") {
@@ -83,7 +410,7 @@ inneropt.DDE <- function(data, times, pars, coefs, lik, proc,
         if (is.null(control.in$maxit)) {
             control.in$maxit = 1000
         }
-        if (is.null(control.in$reltol)) {
+        if (is.null(control.in$reltol)){
             control.in$reltol = 1e-12
         }
         if (is.null(control.in$meth)) {
@@ -94,10 +421,10 @@ inneropt.DDE <- function(data, times, pars, coefs, lik, proc,
         }
         imeth = control.in$meth
         control.in$meth = NULL
-        res = optim(coefs, SplineCoefsErr, gr = SplineCoefsDC,
-            hessian = control.in$reportHessian, control = control.in,
-            times = times, data = data, lik = lik, proc = proc,
-            pars = pars, y.d = y.d, method = imeth)
+        res = optim(coefs, SplineCoefsErr.DDE, gr = SplineCoefsDC.DDE,
+        hessian = control.in$reportHessian, control = control.in,
+        times = times, data = data, lik = lik, proc = proc,
+        pars = pars, method = imeth, basisvals = basisvals, fdobj0 = fdobj0)
         ncoefs = matrix(res$par, ncol(lik$bvals), length(res$par)/ncol(lik$bvals))
     }
     else if (in.meth == "nlminb") {
@@ -114,16 +441,18 @@ inneropt.DDE <- function(data, times, pars, coefs, lik, proc,
             control.in$rel.tol = 1e-12
         }
         if (is.null(control.in$useHessian)) {
-            Hessian = SplineCoefsDC2
+            Hessian = SplineCoefsDC2.DDE
         }
         else {
             Hessian = NULL
         }
         ## SplineCoefsErr do not need to be changed.
         ##
-        res = nlminb(coefs, SplineCoefsErr, gradient = SplineCoefsDC,
-            hessian = Hessian, control = control.in, times = times,
-            data = data, lik = lik, proc = proc, pars = pars, y.d = y.d)
+        res = nlminb(coefs, SplineCoefsErr.DDE, gradient = SplineCoefsDC.DDE,
+        hessian = Hessian,
+        control = control.in, times = times,
+            data = data, lik = lik, proc = proc, pars = pars,
+            basisvals = basisvals, fdobj0 = fdobj0)
         ncoefs = matrix(res$par, ncol(lik$bvals), length(res$par)/ncol(lik$bvals))
     }
     else {
@@ -135,17 +464,20 @@ inneropt.DDE <- function(data, times, pars, coefs, lik, proc,
     return(list(coefs = ncoefs, res = res))
 }
 
+## Added inputs:
+## tauIndex, basisObj, fdobj0
 ProfileSSE.AllPar.DDE <- function(pars, times, data, coefs, lik, proc,
                              in.meth='nlminb', control.in=NULL,
                              dcdp=NULL, oldpars=NULL, use.nls=TRUE, sgn=1,
-                                  tauIndex = NULL, basisObj)
+                             basisvals, fdobj0, tauMax = NULL)
 {
     ## Squared Error outer criterion
 
     ##    coefs = as.vector(coefs)  # First run the inner optimization
     ##
-    f1 = SplineCoefsErr(coefs,times,data,lik,proc,pars)
-    tau <- pars[tauIndex]
+    f1 = SplineCoefsErr.DDE(coefs,times,data,lik,proc,pars, basisvals = basisvals, fdobj0 = fdobj0)
+    ## ?
+    ## tau <- pars[proc$more$more$tauIndex]
     if(use.nls){
         # If using NLS, we need to keep track
         if(file.exists('curcoefs.tmp')){
@@ -154,7 +486,7 @@ ProfileSSE.AllPar.DDE <- function(pars, times, data, coefs, lik, proc,
               stop(paste('Variables in curcoefs.tmp do not conform;',
                        'file exists from previous experiments?'))
           }
-      } else {
+      }else {
           altcoefs = coefs
         }
         if(file.exists('counter.tmp')){
@@ -163,9 +495,9 @@ ProfileSSE.AllPar.DDE <- function(pars, times, data, coefs, lik, proc,
         } else {
           counter = matrix(c(1,0,pars),1,length(pars)+2)
           niter = 0
-        }
+      }
 
-        f2 = SplineCoefsErr(altcoefs,times,data,lik,proc,pars)
+        f2 = SplineCoefsErr.DDE(altcoefs,times,data,lik,proc,pars, basisvals = basisvals, fdobj0 = fdobj0)
 
         if(f2 < f1){
             coefs = altcoefs
@@ -178,8 +510,10 @@ ProfileSSE.AllPar.DDE <- function(pars, times, data, coefs, lik, proc,
     }
 
     ## The coefficients for delayed times:
-    bvals.d <- eval.basis(times-tau, basisObj)
-    y.d <- eval.fd(times - tau, )
+    if(is.null(tauMax)) tauMax <- min(times) + 1/3 * (range(times)[2]- range(times)[1])
+    if(pars["tau"] > tauMax) pars["tau"] <- tauMax
+
+
     ##################################################
     ## Not Sure:
     ## if(!is.null(dcdp)){
@@ -191,22 +525,33 @@ ProfileSSE.AllPar.DDE <- function(pars, times, data, coefs, lik, proc,
     ##     }
     ## }
     ###################################################
-
     ## Inner optimization need to be changed as well.
-    Ires = inneropt(data,times,pars,coefs,lik,proc,y.d, in.meth,control.in)
+    Ires = inneropt.DDE(data,times,pars,coefs,lik,proc, in.meth,control.in, basisvals = basisvals, fdobj0 = fdobj0)
     ncoefs = Ires$coefs
 
+    fdnames <- list(NULL, NULL, NULL)
+    fdnames[[2]] <- attr(coefs, "dimnames")[[2]]
+    fdobj.d <- list(coefs = ncoefs, basis = basisvals, fdnames =fdnames)
+    attr(fdobj.d, "class") <- "fd"
+    ## Can only deal with one "tau".
+    delayLikObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times, pars["tau"])
+    delayProcObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = proc$more$qpts, pars["tau"])
+    lik$more$more$y.d <- delayLikObj$y.d
+    proc$more$more$y.d <- delayProcObj$y.d
+    lik$more$more$dy.d <- delayLikObj$dy.d
+    proc$more$more$dy.d <- delayProcObj$dy.d
+    lik$more$more$bvals.d <- delayLikObj$bvals.d
+    proc$more$more$bvals.d <- delayProcObj$bvals.d
+    lik$more$more$dbvals.d <- delayLikObj$dbvals.d
+    proc$more$more$dbvals.d <- delayProcObj$dbvals.d
     ## Calculate fitted value after inner optimization:
     devals = as.matrix(lik$bvals%*%ncoefs)
     colnames(devals) = proc$more$names
-
-    ## Squared errors:
+    ## Squared errors: No need to change for DDE
     weights = checkweights(lik$more$weights,lik$more$whichobs,data)
-    f = as.vector( as.matrix(data -
-        lik$more$fn(times, devals, pars, lik$more$more))*sqrt(weights))
+    f = as.vector(as.matrix(data - lik$more$fn(times, devals, pars, lik$more$more))*sqrt(weights))
     isnaf = is.na(f)
     f[isnaf] = 0
-
     dlikdp = lik$more$dfdp(times,devals,pars,lik$more$more)
     dlikdp = matrix(dlikdp,dim(dlikdp)[1]*dim(dlikdp)[2],dim(dlikdp)[3])
     ## dlikdp will be zero if the likelihood doesn't directly have ode parameters,
@@ -223,13 +568,14 @@ ProfileSSE.AllPar.DDE <- function(pars, times, data, coefs, lik, proc,
         }
         dlikdc = rbind(dlikdc,tH)
     }
+
     ## ??dlikdc: why 0.5 and 0.5 ??
-    ## Changed for DDE: xd stands for delayed x.
-    d2Hdc2  = SplineCoefsDC2sparse.DDE(ncoefs,times,data,lik,proc,pars, bvalsd = bvalsd)
+    d2Hdc2  = SplineCoefsDC2sparse(ncoefs,times,data,lik,proc,pars)
+    ## need not be changed?
     d2Hdcdp = SplineCoefsDCDP(ncoefs,times,data,lik,proc,pars)
     ## Got warning message:
-    ## In dim(weights[whichrows, ]) == dim(diffs) :
-    ## longer object length is not a multiple of shorter object length
+    ## In dim(weights[whichrows, ]) == dim(diffs):
+    ## longer object length is not a multiple of shorter object length?
 
     ## Use Implicit function theorem:
     if(is.matrix(d2Hdc2)){
@@ -245,9 +591,27 @@ ProfileSSE.AllPar.DDE <- function(pars, times, data, coefs, lik, proc,
     colnames(df) = proc$more$parnames
 
     if(!is.null(lik$report)){ print(f) }
-
     f = sgn*f
     df = sgn*df
+
+    ## Numerical derivative
+    ## nParsDelay <- sum(proc$more$more$tauIndex)
+    ## eps <- 1E-4
+    ## for(i in (length(pars) - nParsDelay + 1):length(pars)){
+    ##     pars.i1 <- pars.i2 <- pars
+    ##     pars.i1[i] <- pars[i] + eps
+    ##     pars.i2[i] <- pars[i] - eps
+    ##     Ires.i1 <- inneropt.DDE(data,times,pars.i1,coefs,lik,proc, in.meth,control.in, basisvals = basisvals, fdobj0 = fdobj0)
+    ##     Ires.i2 <- inneropt.DDE(data,times,pars.i2,coefs,lik,proc, in.meth,control.in, basisvals = basisvals, fdobj0 = fdobj0)
+    ##     ncoefs.i1 <- Ires.i1$coefs
+    ##     ncoefs.i2 <- Ires.i2$coefs
+    ##     devals.i1 = as.matrix(lik$bvals%*%ncoefs.i1)
+    ##     devals.i2 = as.matrix(lik$bvals%*%ncoefs.i2)
+    ##     colnames(devals.i1) <- colnames(devals.i2) <- proc$more$names
+    ##     f.i1 = as.vector( as.matrix(lik$more$fn(times, devals.i1, pars, lik$more$more))*sqrt(weights))
+    ##     f.i2 = as.vector( as.matrix(lik$more$fn(times, devals.i2, pars, lik$more$more))*sqrt(weights))
+    ##     df[,i] <- (f.i2 -  f.i1) / 2 / eps
+    ## }
 
     if(use.nls){
         tf = sum(lik$fn(data,times,devals,pars,lik$more))
@@ -266,11 +630,11 @@ ProfileSSE.AllPar.DDE <- function(pars, times, data, coefs, lik, proc,
         }
 
      if(niter > 1){
-      if(tf < counter[niter,2]){
-       counter = rbind(counter,c(niter+1,tf,pars))
-       write.table(counter,file='counter.tmp',col.names=FALSE,row.names=FALSE)
-      }
-    }
+         if(tf < counter[niter,2]){
+             counter = rbind(counter,c(niter+1,tf,pars))
+             write.table(counter,file='counter.tmp',col.names=FALSE,row.names=FALSE)
+         }
+     }
 
         write.table(ncoefs,file='optcoefs.tmp',col.names=FALSE,row.names=FALSE)
         attr(f,'gradient') = df
@@ -281,510 +645,6 @@ ProfileSSE.AllPar.DDE <- function(pars, times, data, coefs, lik, proc,
     }
 }
 
-## Do not need to use this function. Unchanged for DDE.
-SplineCoefsErr.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1){
-    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
-    devals = as.matrix(lik$bvals %*% coefs2)
-    colnames(devals) = proc$more$names
-    f = sum(lik$fn(data, times, devals, pars, lik$more)) + proc$fn(coefs2,proc$bvals, pars, proc$more)
-    if (!is.null(proc$report)){
-        print(f)
-    }
-    return(sgn * f)
-}
-
-SplineCoefsDC.DDE <- function (coefs, times, data, lik, proc, pars, sgn = 1)
-{
-    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
-    devals = as.matrix(lik$bvals %*% coefs2)
-    colnames(devals) = proc$more$names
-    ## lik$dfdx is not changed
-    g = as.matrix(t(lik$bvals) %*% lik$dfdx(data, times, devals,
-        pars, lik$more)) + proc$dfdc(coefs2, proc$bvals, pars,
-        proc$more)
-    g = as.vector(g)
-    return(sgn * g)
-}
 
 
-## Needs changes
-proc$delay$dfdc <- function(coefs, bvals, pars, more, delay){
-    devals = as.matrix(bvals$bvals %*% coefs)
-    ddevals = as.matrix(bvals$dbvals %*% coefs)
-    colnames(devals) = more$names
-    colnames(ddevals) = more$names
-    names(pars) = more$parnames
-    g1 <- delay$dfdx(ddevals, more$qpts, devals, pars, more)
-    weights = checkweights(more$weights, more$whichobs, g1)
-    g2 = weights * (ddevals - more$fn(more$qpts, devals, pars, more$more))
-    g = as.vector(as.matrix(t(bvals$bvals) %*% g1 + 2 * t(bvals$dbvals) %*% g2))
-    return(g)
 
-}
-
-SplineCoefsDC2sparse.DDE <- function(coefs,times,data,lik,proc,pars,sgn=1, bvalsd)
-{
-    ## This function will not be changed.
-    ##  Inner Hessian with respect to coefficients
-    coefs2 = matrix(coefs,ncol(lik$bvals),length(coefs)/ncol(lik$bvals))
-    devals = as.matrix(lik$bvals%*%coefs2)
-    colnames(devals) = proc$more$names
-
-    ## H[,i,i] will be identity matrix
-    d2lik = lik$d2fdx2(data,times,devals,pars,lik$more)
-
-    H = list(len=ncol(lik$bvals))
-    for(i in 1:dim(d2lik)[2]){
-      H[[i]] = list(len=ncol(devals))
-        for(j in 1:dim(d2lik)[3]){
-            H[[i]][[j]] <- t(lik$bvals)%*%diag(d2lik[,i,j])%*%lik$bvals
-        }
-    }
-    ## This will not be changed for DDE
-    H = blocks2mat(H)
-    H = H + proc$d2fdc2(coefs2,proc$bvals,pars,proc$more)
-    return(sgn*H)
-}
-
-## "more" is taken from $proc$more
-## Originally, proc$d2fdc2() has the result of
-## $$ \bigl[\dot{x}_{l}(t)-f_{l}(t)\bigr]\bigl[\frac{df_{l}}{dx_{j}dx_{i}}
-## + \frac{df_{l}}{dx_{j}} \bigl[\frac{df_{l}}{dx_{i}}\bigr]^{\top} $$
-
-d2fdc2.DDE <- function(coefs, bvals, pars, more){
-    devals = as.matrix(bvals$bvals %*% coefs)
-    ddevals = as.matrix(bvals$dbvals %*% coefs)
-    colnames(devals) = more$names
-    colnames(ddevals) = more$names
-    names(pars) = more$parnames
-    ## H1: make.SSElik()$d2fdx2 is the same function as lik$d2fdx2 ?!
-    ## But the arguments may be different depending on the
-    ## Here more is proc$more
-    H1 = delay$d2fdx2(ddevals, more$qpts, devals, pars,
-        more, devals.d, ddevals.d)
-    H2 = delay$dfdx(more$qpts, devals, pars, more$more, devals.d)
-    weights = checkweights(more$weights, more$whichobs, H1[,
-        , 1, drop = TRUE])
-
-    ##################################################
-    ## New for DDE:
-    ##################################################
-    H2.1 <- delay$dfdx.d(more$qpts, devals, pars, more$more, devals.d)
-    H1.1 <- delay$d2fdx.d2(ddevals, more$qpts, devals, pars, more, devals.d, ddevals.d)
-    H1.2 <- delay$d2fdxdx.d(ddevals, more$qpts, devals, pars, more, devals.d, ddevals.d)
-    H1.3 <- delay$d2fdx.ddx(ddevals, more$qpts, devals, pars, more, devals.d, ddevals.d)
-    H = list(len = dim(bvals$bvals)[2])
-    for (i in 1:dim(devals)[2]){
-        H[[i]] = list(len = dim(devals))
-        for (j in 1:dim(devals)[2]) {
-            H[[i]][[j]] <- t(bvals$bvals) %*% diag(H1[, i, j]) %*% bvals$bvals +
-                t(bvals$bvals.d) %*% diag(H1.1[, i, j]) %*% bvals$bvals.d +
-                t(bvals$dbvals) %*% diag(H1.2[, i, j]) %*% bvals$bvals +
-                t(bvals$bvals) %*% diag(H1.2[, j, i]) %*% bvals$dbvals -
-                2 * t(bvals$dbvals) %*% diag(H2[, i, j] * weights[, i]) %*% bvals$bvals -
-                2 * t(bvals$bvals) %*% diag(H2[, j, i] * weights[, j]) %*% bvals$dbvals -
-                2 * t(bvals$dbvals) %*% diag(H2.1[, i, j] * weights[, i]) %*% bvals$bvals.d -
-                2 * t(bvals$bvals.d) %*% diag(H2.1[, j, i] * weights[, j]) %*% bvals$dbvals
-        }
-        H[[i]][[i]] = H[[i]][[i]] + 2 * t(bvals$dbvals) %*% diag(weights[,
-            i]) %*% bvals$dbvals
-    }
-    H = blocks2mat(H)
-    return(H)
-}
-
-
-## make.SSElik()$d2fdx2 is the same as lik$d2fdx2 (in the case of LS?!)
-## H[,i,i] will be 2 * identity matrix
-lik$d2fdx2.DDE <- function (data, times, devals, pars, more)
-{
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    dfdx = more$dfdx(times, devals, pars, more$more)
-    ## d2fdx2 is a zero array
-    d2fdx2 = more$d2fdx2(times, devals, pars, more$more)
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    H = array(0, c(dim(devals), dim(devals)[2]))
-    for (i in 1:dim(d2fdx2)[3]) {
-        for (j in 1:dim(d2fdx2)[4]) {
-            H[, i, j] = apply(-difs * d2fdx2[, , i, j] + weights *
-                dfdx[, , j] * dfdx[, , i], 1, sum)
-        }
-    }
-    return(2 * H)
-}
-
-SplineCoefsDCDP.DDE <- function (coefs, times, data, lik, proc, pars, sgn = 1)
-{
-    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
-    devals = as.matrix(lik$bvals %*% coefs2)
-    colnames(devals) = proc$more$names
-    d2lik = lik$d2fdxdp(data, times, devals, pars, lik$more)
-    H = c()
-    for (i in 1:length(pars)) {
-        H = cbind(H, as.vector(as.matrix(t(lik$bvals) %*% d2lik[,
-            , i])))
-    }
-    ## Till now, H has all 0's
-    H = H + proc$d2fdcdp(coefs2, proc$bvals, pars, proc$more)
-    return(as.matrix(sgn * H))
-}
-
-## Zero's
-lik$d2fdxdp.d <- function (data, times, devals, pars, more)
-{
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    dfdx = more$dfdx(times, devals, pars, more$more)
-    dfdp = more$dfdp(times, devals, pars, more$more) #0's
-    d2fdxdp = more$d2fdxdp(times, devals, pars, more$more) #0's
-    H = array(0, c(dim(devals), length(pars)))
-    for (i in 1:dim(d2fdxdp)[3]) {
-        for (j in 1:dim(d2fdxdp)[4]) {
-            H[, i, j] = apply(-difs * d2fdxdp[, , i, j] + weights *
-                dfdx[, , i] * dfdp[, , j], 1, sum)
-        }
-    }
-    ## All 0's
-    return(2 * H)
-}
-
-##
-proc$d2fdcdp.d <- function (coefs, bvals, pars, more)
-{
-    devals = as.matrix(bvals$bvals %*% coefs)
-    ddevals = as.matrix(bvals$dbvals %*% coefs)
-    colnames(devals) = more$names
-    colnames(ddevals) = more$names
-    names(pars) = more$parnames
-    H1 = make.SSElik()$d2fdxdp(ddevals, more$qpts, devals, pars,
-        more)
-    H2 = 2 * more$dfdp(more$qpts, devals, pars, more$more)
-    weights = checkweights(more$weights, more$whichobs, H1[,
-        , 1, drop = FALSE])
-    ##################################################
-    ## New for DDE:
-    ##################################################
-    H1.1 <- delay$d2fdxdp(ddevals, more$qpts, devals, pars, more)
-    H3 <- delay$d2fdxdd(ddevals, more$qpts, devals, pars, more)
-    H3.1 <- delay$d2fdxdd.d(ddevals, more$qpts, devals, pars, more, devals.d)
-    H4 <- 2 * delay$dfdd(more$qpts, devals, pars, more$more, devals.d)
-    H = c()
-    for (i in 1:(length(pars)-nParsDelay)) {
-        H = cbind(H, as.vector(as.matrix(t(bvals$bvals) %*% H1[,, i] + t(bvals$bvals.d) %*% H1.1[,,i] - t(bvals$dbvals) %*% (weights * H2[, , i]))))
-    }
-    for(i in (length(pars) + 1 - nParsDelay): length(pars)){
-        H = cbind(H, as.vector(as.matrix(t(bvals$bvals) %*% H3[,, i] + t(bvals$bvals.d) %*% H3.1[,,i] - t(bvals$dbvals) %*% (weights * H4[, , i]))))
-    }
-    return(H)
-}
-
-delay$d2fdx2(ddevals, more$qpts, devals, pars, more, devals.d, ddevals.d)
-
-## Replacing make.SSElik()$dfdx()
-proc$delay$dfdx <- function(data, times, devals, pars, more){
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    dfdx = more$dfdx(times, devals, pars, more$more)
-    dfdx.d = more$delay$dfdx.d(times, devals, pars, more$more, y.d)
-    g = c()
-    for (i in 1:dim(dfdx)[3]) {
-        g = cbind(g, apply(difs * (dfdx[, , i] + dfdx.d[, , i]), 1, sum))
-    }
-    return(-2 * g)
-}
-
-
-weights = checkweights(more$weights, more$whichobs, H1[,, 1, drop = TRUE])
-
-delay$d2fdx.d2 <- function(){
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    dfdx.d = delay$dfdx.d(times, devals, pars, more$more)
-    d2fdx.d2 = delay$d2fdx.d2(times, devals, pars, more$more, devals.d)
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    H = array(0, c(dim(devals), dim(devals)[2]))
-    for (i in 1:dim(d2fdx2.d)[3]) {
-        for (j in 1:dim(d2fdx2.d)[4]) {
-            H[, i, j] = apply(-difs * d2fdx2.d[, , i, j] + weights *
-             dfdx.d[, , j] * dfdx.d[, , i], 1, sum)
-        }
-    }
-    return(2 * H)
-}
-
-delay$d2fdxdx.d <- function(){
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    dfdx = more$dfdx(times, devals, pars, more$more)
-    dfdx.d <- more$dfdx(times, devals, pars, more$more)
-    d2fdx2 <- delay$d2fdxdx.d(times, devals, pars, more$more, devals.d)
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    H = array(0, c(dim(devals), dim(devals)[2]))
-    for (i in 1:dim(d2fdx2)[3]) {
-        for (j in 1:dim(d2fdx2)[4]) {
-            H[, i, j] = apply(-difs * d2fdx2[, , i, j] + weights *
-             dfdx[, , j] * dfdx.d[, , i], 1, sum)
-        }
-    }
-    return(2 * H)
-}
-
-delay$d2fdx.ddx <- function(){
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    dfdx = more$dfdx(times, devals, pars, more$more)
-    dfdx.d <- more$dfdx(times, devals, pars, more$more)
-    d2fdx2 <- delay$d2fdx.ddx(times, devals, pars, more$more, devals.d)
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    H = array(0, c(dim(devals), dim(devals)[2]))
-    for (i in 1:dim(d2fdx2)[3]){
-        for (j in 1:dim(d2fdx2)[4]){
-            H[, i, j] = apply(-difs * d2fdx2[, , i, j] + weights *
-             dfdx.d[, , j] * dfdx[, , i], 1, sum)
-        }
-    }
-    return(2 * H)
-}
-
-delay$d2fdx.ddp <- function(ddevals, more$qpts, devals, pars, more){
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    dfdx.d = more$dfdx.d(times, devals, pars, more$more)
-    dfdp = more$dfdp(times, devals, pars, more$more)
-    d2fdx.ddp = more$d2fdxdp(times, devals, pars, more$more)
-    H = array(0, c(dim(devals), length(pars)))
-    for (i in 1:dim(d2fdxdp)[3]) {
-        for (j in 1:dim(d2fdxdp)[4]) {
-            H[, i, j] = apply(-difs * d2fdx.ddp[, , i, j] + weights *
-                dfdx.d[, , i] * dfdp[, , j], 1, sum)
-        }
-    }
-    return(2 * H)
-}
-
-delay$d2fdxdd <- function(ddevals, more$qpts, devals, pars, more){
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    dfdx = more$dfdx(times, devals, pars, more$more)
-    dfdd = more$dfdd(times, devals, pars, more$more)
-    d2fdxdd = more$d2fdxdp(times, devals, pars, more$more)
-    H = array(0, c(dim(devals), length(pars)))
-    for (i in 1:dim(d2fdxdp)[3]) {
-        for (j in 1:dim(d2fdxdp)[4]) {
-            H[, i, j] = apply(-difs * d2fdx.ddp[, , i, j] + weights *
-                dfdx.d[, , i] * dfdp[, , j], 1, sum)
-        }
-    }
-    return(2 * H)
-}
-
-delay$d2fdx.ddd <- function(ddevals, more$qpts, devals, pars, more, devals.d){
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    dfdx = more$dfdx(times, devals, pars, more$more)
-    dfdd = more$dfdd(times, devals, pars, more$more)
-    d2fdxdd = more$d2fdxdp(times, devals, pars, more$more)
-    H = array(0, c(dim(devals), length(pars)))
-    for (i in 1:dim(d2fdxdp)[3]){
-        for (j in 1:dim(d2fdxdp)[4]) {
-            H[, i, j] = apply(-difs * d2fdx.ddp[, , i, j] + weights *
-                dfdx.d[, , i] * dfdp[, , j], 1, sum)
-        }
-    }
-    return(2 * H)
-}
-
-delay$dfdd <- function(more$qpts, devals, pars, more$more, devals.d)
-{
-    devals = as.matrix(bvals$bvals %*% coefs)
-    ddevals = as.matrix(bvals$dbvals %*% coefs)
-    colnames(devals) = more$names
-    colnames(ddevals) = more$names
-    names(pars) = more$parnames
-    g = delay$dfddMat(ddevals, more$qpts, devals, pars,
-        more)
-    g = apply(g, 2, sum)
-    return(g)
-}
-
-delay$dfddMat <- function(data, times, devals, pars, more){
-    fdevals = more$fn(times, devals, pars, more$more)
-    difs = data - fdevals
-    difs[is.na(difs)] = 0
-    weights = checkweights(more$weights, more$whichobs, difs)
-    difs = weights * difs
-    dfdp = more$dfdp(times, devals, pars, more$more)
-    g = c()
-    for (i in 1:dim(dfdp)[3]) {
-        g = cbind(g, apply(difs * dfdd[, , i], 1, sum))
-    }
-    return(-2 * g)
-}
-vectorD <- list()
-
-## y.d is added for delay
-vectorD.Fun <- vectorD$proc$more$fn <- function (times, y, p, more)
-{
-    y.d <- more$y.d
-    r <- y
-    r[, "S"] <- p["b"] * y.d[,"S"] * (1 - y[,"S"]) - p["a"] * y[,"S"]
-    return(r)
-}
-
-vectorD$proc$more$dfdx <- function(t, x, pars, more){
-    y.d <- more$y.d
-    r = array(0, c(dim(y), dim(y)[2]))
-    dimnames(r) = list(NULL, colnames(y), colnames(y))
-    r[,"S", "S"] <- -p["b"] * y.d[,"S"] - p["a"]
-    return(r)
-}
-
-vectorD$proc$more$dfdp <- function(times, y, p, more)
-{
-    y.d <- more$y.d
-    r = array(0, c(dim(y), length(p)))
-    dimnames(r) = list(NULL, colnames(y), names(p))
-    r[, "V", "a"] <- - y[,"S"]
-    r[, "V", "b"] <- y.d[,"S"] * (1 - y[,"S"])
-    return(r)
-}
-
-## Return an array of all 0's
-vectorD$proc$more$d2fdx2 <- function(times, y, p, more){
-    y.d <- more$y.d
-    r = array(0, c(dim(y), 1, 1))
-    dimnames(r) = list(NULL, colnames(y), colnames(y), colnames(y))
-    return(r)
-}
-
-vectorD$proc$more$d2fdxdp <- function (times, y, p, more)
-{
-    y.d <- more$y.d
-    r = array(0, c(dim(y), dim(y)[2], length(p)))
-    dimnames(r) = list(NULL, colnames(y), colnames(y), names(p))
-    r[,"S", "S", "a"] <- -1
-    r[,"S", "S", "b"] <- - y.d[,"S"]
-}
-
-## New functions:
-vectorD$proc$more$dfdx.d <- function(times, x, pars, more){
-    y.d <- more$y.d
-    r = array(0, c(dim(y), dim(y)[2]))
-    dimnames(r) = list(NULL, colnames(y), colnames(y.d))
-    r[,"S", "Delay"] <- p["b"] * (1 - y[,"S"])
-    return(r)
-}
-
-vectorD$proc$more$d2fdxdx.d <- function(times, x, pars, more){
-    y.d <- more$y.d
-    r = array(-1, c(dim(y), 1, 1))
-    dimnames(r) = list(NULL, colnames(y), colnames(y), colnames(y.d))
-    return(r)
-}
-
-vectorD$proc$more$d2fdxdx.d <- function(times, x, pars, more){
-    y.d <- more$y.d
-    r = array(0, c(dim(y), 1, 1))
-    dimnames(r) = list(NULL, colnames(y), colnames(y.d), colnames(y.d))
-    return(r)
-}
-
-vectorFun <- list()
-
-vectorFun$fn <- function (times, y, p, more)
-{
-    y.d <- more$y.d
-    r <- y
-    dimnames(r) <- dimnames(y) ## ??
-    r[, "S"] <- p["b"] * y.d[,"S"] * (1 - y[,"S"]) - p["a"] * y[,"S"]
-    return(r)
-}
-
-vectorFun$fn.ode <- function(times, y, p)
-{
-    r <- y
-    dimnames(r) <- dimnames(y) ## ??
-    r[, "S"] <- p["b"] * y.d[,"S"] * (1 - y[,"S"]) - p["a"] * y[,"S"]
-    return(r)
-}
-
-
-vectorFun$dfdx <- function(times, y, p, more){
-    y.d <- more$y.d
-    r = array(0, c(dim(y), dim(y)[2]))
-    dimnames(r) = list(NULL, colnames(y), colnames(y))
-    r[,"S", "S"] <- -p["b"] * y.d[,"S"] - p["a"]
-    return(r)
-}
-
-vectorFun$dfdp <- function(times, y, p, more)
-{
-    y.d <- more$y.d
-    r = array(0, c(dim(y), length(p)))
-    dimnames(r) = list(NULL, colnames(y), names(p))
-    r[, "V", "a"] <- - y[,"S"]
-    r[, "V", "b"] <- y.d[,"S"] * (1 - y[,"S"])
-    return(r)
-}
-
-vectorFun$d2fdxdp <- function (times, y, p, more)
-{
-    y.d <- more$y.d
-    r = array(0, c(dim(y), dim(y)[2], length(p)))
-    dimnames(r) = list(NULL, colnames(y), colnames(y), names(p))
-    r[,"S", "S", "a"] <- -1
-    r[,"S", "S", "b"] <- - y.d[,"S"]
-}
-
-vectorFun$d2fdx2 <- function(times, y, p, more){
-    y.d <- more$y.d
-    r = array(0, c(dim(y), 1, 1))
-    dimnames(r) = list(NULL, colnames(y), colnames(y), colnames(y))
-    return(r)
-}
-
-vectorFun$dfdx.d <- function(times, x, pars, more){
-    y.d <- more$y.d
-    r = array(0, c(dim(y), dim(y)[2]))
-    dimnames(r) = list(NULL, colnames(y), colnames(y.d))
-    r[,"S", "Delay"] <- p["b"] * (1 - y[,"S"])
-    return(r)
-}
-
-vectorFun$d2fdxdx.d <- function(times, x, pars, more){
-    y.d <- more$y.d
-    r = array(-1, c(dim(y), 1, 1))
-    dimnames(r) = list(NULL, colnames(y), colnames(y), colnames(y.d))
-    return(r)
-}
-
-vectorFun$d2fdxdx.d <- function(times, x, pars, more){
-    y.d <- more$y.d
-    r = array(0, c(dim(y), 1, 1))
-    dimnames(r) = list(NULL, colnames(y), colnames(y.d), colnames(y.d))
-    return(r)
-}
