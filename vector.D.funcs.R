@@ -118,7 +118,7 @@ vectorFun$d2fdxdp <- function (times, y, p, more)
 
 vectorFun$d2fdx.ddp <- function(times, y, p, more){
     y.d <- more$y.d
-    r <- array(0, c(dim(y), dim(y)[2], 2))
+    r <- array(0, c(dim(y), 1, 2))
     dimnames(r) = list(NULL, colnames(y), colnames(y), names(p)[c(1:2)])
     r[,"S", "S", "a"] <- 0
     r[,"S", "S", "b"] <- 1 - y

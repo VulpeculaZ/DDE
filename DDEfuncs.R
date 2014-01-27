@@ -328,8 +328,9 @@ Smooth.LS.DDE <- function(fn, data, times, pars, coefs = NULL, coefs0 = NULL,  b
 
 SplineCoefsErr.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, basisvals, fdobj0){
     fdnames <- list(NULL, NULL, NULL)
-    fdnames[[2]] <- attr(coefs, "dimnames")[[2]]
-    fdobj.d <- list(coefs = coefs, basis = basisvals, fdnames =fdnames)
+    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
+    fdnames[[2]] <- attr(coefs2, "dimnames")[[2]]
+    fdobj.d <- list(coefs = coefs2, basis = basisvals, fdnames =fdnames)
     attr(fdobj.d, "class") <- "fd"
     delayProcObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = proc$more$qpts, tau = pars["tau"])
     delayLikObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = times, tau = pars["tau"])
@@ -342,7 +343,6 @@ SplineCoefsErr.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, bas
     lik$more$more$dbvals.d <- delayLikObj$dbvals.d
     proc$more$more$dbvals.d <- delayProcObj$dbvals.d
 
-    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
     devals = as.matrix(lik$bvals %*% coefs2)
     colnames(devals) = proc$more$names
     f = sum(lik$fn(data, times, devals, pars, lik$more)) + proc$fn(coefs2,
@@ -355,8 +355,9 @@ SplineCoefsErr.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, bas
 
 SplineCoefsDC.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, basisvals, fdobj0){
     fdnames <- list(NULL, NULL, NULL)
-    fdnames[[2]] <- attr(coefs, "dimnames")[[2]]
-    fdobj.d <- list(coefs = coefs, basis = basisvals, fdnames =fdnames)
+    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
+    fdnames[[2]] <- attr(coefs2, "dimnames")[[2]]
+    fdobj.d <- list(coefs = coefs2, basis = basisvals, fdnames =fdnames)
     attr(fdobj.d, "class") <- "fd"
     delayProcObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = proc$more$qpts, tau = pars["tau"])
     delayLikObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = times, tau = pars["tau"])
@@ -368,7 +369,6 @@ SplineCoefsDC.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, basi
     proc$more$more$bvals.d <- delayProcObj$bvals.d
     lik$more$more$dbvals.d <- delayLikObj$dbvals.d
     proc$more$more$dbvals.d <- delayProcObj$dbvals.d
-    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
     devals = as.matrix(lik$bvals %*% coefs2)
     colnames(devals) = proc$more$names
     g = as.matrix(t(lik$bvals) %*% lik$dfdx(data, times, devals,
@@ -380,8 +380,9 @@ SplineCoefsDC.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, basi
 
 SplineCoefsDC2.DDE <- function(coefs, times, data, lik, proc, pars, sgn = 1, basisvals, fdobj0){
     fdnames <- list(NULL, NULL, NULL)
-    fdnames[[2]] <- attr(coefs, "dimnames")[[2]]
-    fdobj.d <- list(coefs = coefs, basis = basisvals, fdnames =fdnames)
+    coefs2 = matrix(coefs, ncol(lik$bvals), length(coefs)/ncol(lik$bvals))
+    fdnames[[2]] <- attr(coefs2, "dimnames")[[2]]
+    fdobj.d <- list(coefs = coefs2, basis = basisvals, fdnames =fdnames)
     attr(fdobj.d, "class") <- "fd"
     delayProcObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = proc$more$qpts, tau = pars["tau"])
     delayLikObj <- delay.fit(fd0 = fdobj0, fd.d = fdobj.d, times = times, tau = pars["tau"])

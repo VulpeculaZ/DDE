@@ -31,7 +31,7 @@ delay$dfdc <- function(coefs, bvals, pars, more){
     g1.d <- more$delay$dfdx.d(ddevals, more$qpts, devals, pars, more)
     weights = checkweights(more$weights, more$whichobs, g1)
     g2 = weights * (ddevals - more$fn(more$qpts, devals, pars, more$more))
-    bvals.d <- rbind( matrix(0, length(g1.d) - dim(more$more$bvals.d)[1], length(g1.d)), more$more$bvals.d)
+    bvals.d <- rbind( matrix(0, dim(g1.d)[1] - dim(more$more$bvals.d)[1], dim(g1.d)[1]), more$more$bvals.d)
     g = as.vector(as.matrix(t(bvals$bvals) %*% g1 + t(bvals.d) %*% g1.d + 2 * t(bvals$dbvals) %*% g2))
     return(g)
 }
@@ -194,7 +194,7 @@ delay$d2fdcdp.DDE <- function (coefs, bvals, pars, more)
     H3 <- delay$d2fdxdtau(ddevals, more$qpts, devals, pars, more)
     H3.1 <- delay$d2fdx.ddtau(ddevals, more$qpts, devals, pars, more)
     H3.2 <- delay$d2fdx.ddtau2(ddevals, more$qpts, devals, pars, more)
-    H4 <- 2 * more$dfdtau(more$qpts, devals, pars, more)
+    H4 <- 2 * more$dfdtau(more$qpts, devals, pars, more)[,,more$more$tauIndex, drop = FALSE]
     H = c()
     for (i in 1:(length(pars)-nParsDelay)) {
         H = cbind(H, as.vector(as.matrix(t(bvals$bvals) %*% H1[,, i] + t(bvals.d) %*% H1.1[,,i] - t(bvals$dbvals) %*% (weights * H2[, , i]))))
@@ -248,8 +248,8 @@ delay$d2fdxdtau <- function (data, times, devals, pars, more)
     weights = checkweights(more$weights, more$whichobs, difs)
     difs = weights * difs
     dfdx = more$dfdx(times, devals, pars, more$more)
-    dfdtau <- more$dfdtau(times, devals, pars, more)
-    d2fdxdtau <- more$d2fdxdtau(times, devals, pars, more)
+    dfdtau <- more$dfdtau(times, devals, pars, more)[,,more$more$tauIndex, drop = FALSE]
+    d2fdxdtau <- more$d2fdxdtau(times, devals, pars, more)[,,,more$more$tauIndex, drop = FALSE]
     H = array(0, c(dim(devals), sum(more$more$tauIndex)))
     for (i in 1:dim(d2fdxdtau)[3]) {
         for (j in 1:dim(d2fdxdtau)[4]) {
@@ -257,6 +257,7 @@ delay$d2fdxdtau <- function (data, times, devals, pars, more)
                 dfdx[, , i] * dfdtau[, , j], 1, sum)
         }
     }
+
     return(2 * H)
 }
 
@@ -269,8 +270,8 @@ delay$d2fdx.ddtau <- function(data, times, devals, pars, more){
     weights = checkweights(more$weights, more$whichobs, difs)
     difs = weights * difs
     dfdx.d = more$dfdx.d(times, devals, pars, more$more)
-    dfdtau <- more$dfdtau(times, devals, pars, more)
-    d2fdx.ddtau <- more$d2fdx.ddtau(times, devals, pars, more)
+    dfdtau <- more$dfdtau(times, devals, pars, more)[,,more$more$tauIndex, drop = FALSE]
+    d2fdx.ddtau <- more$d2fdx.ddtau(times, devals, pars, more)[,,, more$more$tauIndex, drop = FALSE]
     H = array(0, c(dim(devals), sum(more$more$tauIndex)))
     for (i in 1:dim(d2fdx.ddtau)[3]) {
         for (j in 1:dim(d2fdx.ddtau)[4]) {
@@ -288,7 +289,7 @@ delay$d2fdx.ddtau2 <- function(data, times, devals, pars, more){
     difs[is.na(difs)] = 0
     weights = checkweights(more$weights, more$whichobs, difs)
     difs = weights * difs
-    dfdx.d <- more$dfdx.d(times, devals, pars, more$more)
+    dfdx.d <- more$dfdx.d(times, devals, pars, more$more)[,,more$more$tauIndex, drop = FALSE]
     H = array(0, c(dim(devals), sum(more$more$tauIndex)))
     for (i in 1:dim(H)[3]) {
             H[, i, i] = apply(-difs * weights *
