@@ -23,7 +23,7 @@ times <- seq(-DSIR.pars["tau"], 25, by = 0.1)
 yinit <- c(0.85, 0.15)
 lambda <- 1000
 sdy <- 0.02
-n <- 2
+n <- 100
 
 yout <- dede(y = yinit, times = times, func = DSIR.gen, parms = DSIR.pars, atol = 1e-10)
 
@@ -68,4 +68,7 @@ for (i in 1:n){
     data.list[[i]] <- dde.fit$data
 }
 
-save((DSIR.pars, coefs.List, conv.list, data.list, par.mat, file = paste(paste(n,sdy,lambda, sep="_"),".RData"))
+curSeed <- .Random.seed
+
+save(curSeed, file = "curSeed.Rdata")
+save(DSIR.pars, coefs.list, conv.list, data.list, par.mat, file = paste(paste(n,sdy,lambda, sep="_"),".RData"))
