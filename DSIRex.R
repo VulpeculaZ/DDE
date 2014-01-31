@@ -1,4 +1,7 @@
-source("DSIRfn.R")
+source("./sources/toload.R")
+source("./sources/DSIRfn.R")
+nls.control(warnOnly = TRUE)
+
 
 ## Function to simulate  SIR model:
 SIR.gen <- function(t, y, parms){
@@ -59,8 +62,8 @@ bfdPar.d <- fdPar(basis.d,lambda=1,int2Lfd(1))
 
 
 xout <- c()
-xout <- cbind(xout, yout[,2] + rnorm(length(yout[,2]), sd = 0.05))
-xout <- cbind(xout, yout[,3] + rnorm(length(yout[,2]), sd = 0.05))
+xout <- cbind(xout, yout[,2] + rnorm(length(yout[,2]), sd = 0.02))
+xout <- cbind(xout, yout[,3] + rnorm(length(yout[,2]), sd = 0.02))
 ## points(times, xout)
 xout0 <- xout[times >= 0,]
 xout.d <- xout[times >= 5,]
@@ -80,52 +83,25 @@ colnames(coefs.d) = c("S", "I")
 
 ##  Set a value for lambda
 lambda = 1000
-
 ## Data
 dsirData <- matrix(xout.d, ncol =2, dimnames = list(NULL,c("S", "I")))
-
 ## Setting initial values
 initPars <- c(1.4, 0.6, 0.9)
 names(initPars) <- c("beta","gamma","tau")
 
-# nls.control(warnOnly = TRUE)
-# debug(Smooth.LS.DDE)
+## Only fitting one inner optimzation:
 dde.1fit2 <- Smooth.LS.DDE(DSIRfn, dsirData, times.d, initPars, coefs = coefs.d, coefs0, basisvals = basis.d, basisvals0 =  basis0, lambda, in.meth='nlminb',tauMax = 5, delay = delay)
-# Let's have a look at this
 
+## Let's have a look at this
+## The initial values are not very good.
 coefs1 = dde.1fit2$coefs
 DEfd1 = fd(coefs1, basis.d)
 plotfit.fd(dsirData, times.d , DEfd1)
 
+## Estimation:
 dde.fit <- Profile.LS.DDE(DSIRfn, dsirData, times.d, initPars, coefs = coefs1, basisvals = basis.d, lambda, in.meth='nlminb', delay = delay, basisvals0 = basis0, coefs0 = coefs0, tauIndex = c(FALSE, TRUE))
 
 DEfd2 = fd(dde.fit$coefs,basis.d, fdnames)
 plotfit.fd(dsirData, times.d , DEfd2)
 
-fit.list <- list()
-par.mat <- c()
-set.seed(42)
-for (i in 1:20){
-    xout <- c()
-    xout <- cbind(xout, yout[,2] + rnorm(length(yout[,2]), sd = 0.01))
-    xout <- cbind(xout, yout[,3] + rnorm(length(yout[,2]), sd = 0.01))
-    xout0 <- xout[times >= 0,]
-    xout.d <- xout[times >= 5,]
-    DEfd0 <- smooth.basis(knots0,xout0,bfdPar0,fdnames=fdnames)$fd
-    DEfd.d <- smooth.basis(knots.d, xout.d, bfdPar.d, fdnames=fdnames)$fd
-    ## extract the coefficients and assign variable names
-    coefs0 <- DEfd0$coefs
-    colnames(coefs0) = c("S","I")
-    coefs.d <- DEfd.d$coefs
-    colnames(coefs.d) = c("S", "I")
-    dsirData <- matrix(xout.d, ncol =2, dimnames = list(NULL,c("S", "I")))
-    dde.fit <- Profile.LS.DDE(DSIRfn, dsirData, times.d, initPars, coefs = coefs0, basisvals = basis.d, lambda, in.meth='nlminb', delay = delay, basisvals0 = basis0, coefs0 = coefs0, tauIndex = c(FALSE, TRUE))
-    DEfd2 = fd(dde.fit$coefs,basis.d, fdnames)
-    fit.list[[i]] <- DEfd2
-    par.mat <- rbind(par.mat, dde.fit$pars)
-}
 
-hist(par.mat[,1])
-hist(par.mat[,2])
-hist(par.mat[,3])
-## Varying initial values, 1000 replicas
