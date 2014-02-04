@@ -1,4 +1,4 @@
-Parameters Estimation for Delayed Differential Equations (DDE).
+Parameters Estimation for Delay Differential Equations (DDE).
 ===
 ### Usage:
 R functions to estimate parameters of DDEs with noisy data are presented here. It requires the **CollocInfer** package to function and provides a few wrapper functions to adapt to the task for estimating parameters of DDEs. Only least squares (normal measurement error) is supported for now.
