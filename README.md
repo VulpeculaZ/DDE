@@ -6,7 +6,7 @@ R functions to estimate parameters of DDEs with noisy data are presented here. I
 Examples for delayed vector disease model and delayed SIR model are provided.
 
 ### References:
-Estimation method is based on in:
+Estimation method is based on:
 
 1. Campbell, D. A. & Chkrebtii, O. Maximum profile likelihood estimation of differential equation parameters through model based smoothing state estimates. Mathematical Biosciences 246, 283–292 (2013). 
 
